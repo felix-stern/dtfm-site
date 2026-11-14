@@ -16,14 +16,14 @@ Ensure `~/.local/bin` is in `PATH` (`export PATH="$HOME/.local/bin:$PATH"`), the
 - **Local / SSH Unix socket**: `lmdtfy ping` (or `--socket <path>` / `LMDTFY_SOCKET`)
 - **E2EE Magic Link (relay)**:
   ```sh
-  lmdtfy --relay "<magic-link>" ping
+  lmdtfy ping --relay "<magic-link>"
   ```
   Or `export LMDTFY_RELAY="<magic-link>"` in persistent shells (stateless tool-runner subshells do not preserve `export` across calls, so pass `--relay "<magic-link>"` per command; add `--relay-url wss://...` / `LMDTFY_RELAY_URL` only for bare `<session>#<key>` tokens on a self-hosted relay).
 
 ## 2. Execution Rules
 
 ```sh
-lmdtfy [--relay "<magic-link>"] exec --why "<concise reason>" [--cwd <dir>] [--timeout <sec>] -- <cmd> [args...]
+lmdtfy exec --why "<concise reason>" [--relay "<magic-link>"] [--socket <path>] [--cwd <dir>] [--timeout <sec>] -- <cmd> [args...]
 ```
 
 - **Direct `execvp` (no implicit shell)**: Arguments are executed directly. Wrap pipes (`|`), `&&`, redirects, or heredocs in `sh -c '...'` (or `bash -c '...'`), and pass env vars via `env` (e.g., `sudo env DEBIAN_FRONTEND=noninteractive apt-get ...`).
