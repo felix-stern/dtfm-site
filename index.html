@@ -1,0 +1,818 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>dtfm — Do That For Me | Human-in-the-loop command gateway for AI agents</title>
+  <meta name="description" content="Let sandboxed AI agents run privileged commands with your [y] approval. Keep sudo, SSH keys, and cloud tokens on your machine.">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/favicon.ico" sizes="32x32">
+  <style>
+    :root {
+      --bg: #ffffff;
+      --bg-elev: #f6f8fa;
+      --bg-code: #f3f5f8;
+      --bg-code-head: #eaeef2;
+      --code-text: #1f2328;
+      --code-dim: #656d76;
+      --code-blue: #0550ae;
+      --code-orange: #bc4c00;
+      --code-green: #1a7f37;
+      --code-bold: #0f1419;
+      --text: #1f2328;
+      --text-muted: #57606a;
+      --border: #d0d7de;
+      --blue: #0088d1;
+      --blue-glow: rgba(0, 168, 255, 0.12);
+      --orange: #e06300;
+      --orange-glow: rgba(255, 122, 0, 0.12);
+      --warn-bg: #fffbeb;
+      --warn-border: #d4a72c;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      --sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0b0f14;
+        --bg-elev: #121821;
+        --bg-code: #080b10;
+        --bg-code-head: rgba(255, 255, 255, 0.04);
+        --code-text: #e6edf3;
+        --code-dim: #8b949e;
+        --code-blue: #58a6ff;
+        --code-orange: #ffa657;
+        --code-green: #3fb950;
+        --code-bold: #ffffff;
+        --text: #e6edf3;
+        --text-muted: #8b949e;
+        --border: #26303d;
+        --blue: #00A8FF;
+        --blue-glow: rgba(0, 168, 255, 0.16);
+        --orange: #FF7A00;
+        --orange-glow: rgba(255, 122, 0, 0.16);
+        --warn-bg: rgba(187, 128, 9, 0.10);
+        --warn-border: rgba(210, 153, 34, 0.55);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--sans);
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { color: var(--blue); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code {
+      font-family: var(--mono);
+      font-size: 0.88em;
+      background: var(--bg-elev);
+      padding: 0.12em 0.36em;
+      border-radius: 4px;
+    }
+
+    .container {
+      max-width: 1020px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+
+    /* Header / Nav */
+    header {
+      border-bottom: 1px solid var(--border);
+      background: var(--bg);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    .nav {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      min-height: 58px;
+      flex-wrap: wrap;
+      padding: 8px 0;
+    }
+    .brand {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      font-weight: 700;
+      font-size: 1.05rem;
+      color: var(--text);
+    }
+    .brand:hover { text-decoration: none; }
+    .brand-glyph {
+      display: block;
+      width: 26px;
+      height: 22px;
+      flex-shrink: 0;
+    }
+    .nav-links {
+      display: flex;
+      align-items: center;
+      gap: 18px;
+      flex-wrap: wrap;
+      font-size: 0.92rem;
+    }
+    .nav-links a { color: var(--text-muted); font-weight: 500; }
+    .nav-links a:hover { color: var(--text); text-decoration: none; }
+
+    /* Hero */
+    .hero { padding: 44px 0 36px; }
+    .hero-top {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 28px;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+    .hero-logo {
+      width: 112px;
+      height: auto;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      display: block;
+    }
+    .hero-logo-dark { display: none; }
+    @media (prefers-color-scheme: dark) {
+      .hero-logo-light { display: none; }
+      .hero-logo-dark { display: block; }
+    }
+    h1 {
+      font-size: clamp(1.85rem, 3.6vw, 2.55rem);
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+      margin: 0 0 12px;
+    }
+    .lead {
+      font-size: 1.07rem;
+      color: var(--text-muted);
+      max-width: 720px;
+      margin: 0;
+    }
+    .lead strong { color: var(--text); }
+
+    /* Split terminal + aligned pills */
+    .split-term {
+      display: grid;
+      grid-template-columns: 1fr 1.15fr;
+      gap: 14px;
+      align-items: stretch;
+    }
+    .term-col {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 0;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      align-self: flex-start;
+      gap: 7px;
+      padding: 5px 12px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--bg-elev);
+      font-size: 0.85rem;
+    }
+    .pill-blue { border-color: var(--blue); background: var(--blue-glow); }
+    .pill-orange { border-color: var(--orange); background: var(--orange-glow); }
+    .pill code { background: transparent; padding: 0; font-weight: 700; }
+
+    .term-card {
+      background: var(--bg-code);
+      color: var(--code-text);
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+    .term-card.blue { border-top: 3px solid var(--blue); }
+    .term-card.orange { border-top: 3px solid var(--orange); }
+    .term-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      padding: 8px 13px;
+      background: var(--bg-code-head);
+      border-bottom: 1px solid var(--border);
+      font-size: 0.78rem;
+      color: var(--text-muted);
+      font-family: var(--mono);
+    }
+    .term-tabs { display: inline-flex; gap: 4px; }
+    .term-tab {
+      background: transparent;
+      border: 1px solid transparent;
+      color: var(--text-muted);
+      font-family: var(--sans);
+      font-size: 0.74rem;
+      padding: 2px 8px;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+    .term-tab.active {
+      background: var(--bg);
+      border-color: var(--border);
+      color: var(--text);
+      font-weight: 600;
+    }
+    .term-body {
+      margin: 0;
+      padding: 14px;
+      font-family: var(--mono);
+      font-size: 0.82rem;
+      line-height: 1.5;
+      overflow-x: auto;
+      white-space: pre;
+    }
+    .t-dim { color: var(--code-dim); }
+    .t-blue { color: var(--code-blue); }
+    .t-orange { color: var(--code-orange); }
+    .t-green { color: var(--code-green); }
+    .t-bold { font-weight: 700; color: var(--code-bold); }
+
+    .term-caption {
+      margin: 14px 0 0;
+      padding: 11px 15px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--code-green);
+      background: var(--bg-elev);
+      font-size: 0.92rem;
+      color: var(--text);
+    }
+
+    /* Install bar (under Quickstart) */
+    .install-row {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+      margin-bottom: 20px;
+    }
+    .cmd-box {
+      display: inline-flex;
+      align-items: center;
+      gap: 12px;
+      background: var(--bg-code);
+      color: var(--code-text);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 9px 14px;
+      font-family: var(--mono);
+      font-size: 0.9rem;
+      max-width: 100%;
+      overflow-x: auto;
+    }
+    .cmd-box .prompt { color: var(--code-dim); user-select: none; }
+    .copy-btn {
+      background: var(--bg);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-family: var(--sans);
+      font-size: 0.78rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .copy-btn:hover { border-color: var(--text-muted); }
+
+    .btn-row {
+      display: inline-flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      padding: 9px 15px;
+      border-radius: 8px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      border: 1px solid var(--border);
+      color: var(--text);
+      background: var(--bg-elev);
+    }
+    .btn:hover { text-decoration: none; border-color: var(--text-muted); }
+    .btn-primary {
+      background: var(--blue);
+      border-color: var(--blue);
+      color: #ffffff;
+    }
+    .btn-primary:hover { opacity: 0.92; border-color: var(--blue); }
+
+    .meta-line {
+      font-size: 0.84rem;
+      color: var(--text-muted);
+      margin: 0;
+    }
+
+    /* Sections */
+    section {
+      padding: 36px 0;
+      border-top: 1px solid var(--border);
+    }
+    h2 {
+      font-size: 1.45rem;
+      margin: 0 0 8px;
+      letter-spacing: -0.01em;
+    }
+    .sec-sub {
+      color: var(--text-muted);
+      margin: 0 0 20px;
+    }
+
+    /* SVG Diagram inside tabs */
+    .diagram-wrap {
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      margin-bottom: 14px;
+      overflow-x: auto;
+    }
+    .diagram-wrap svg {
+      display: block;
+      width: 100%;
+      max-width: 880px;
+      height: auto;
+      margin: 0 auto;
+    }
+
+    /* Quickstart Tabs */
+    .tabs {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .tab-btn {
+      padding: 7px 14px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background: var(--bg-elev);
+      color: var(--text-muted);
+      font-size: 0.88rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .tab-btn.active {
+      background: var(--bg);
+      color: var(--text);
+      border-color: var(--blue);
+      box-shadow: 0 0 0 1px var(--blue);
+    }
+    .tab-panels {
+      display: grid;
+    }
+    .tab-panel {
+      grid-area: 1 / 1;
+      visibility: hidden;
+      pointer-events: none;
+    }
+    .tab-panel.active {
+      visibility: visible;
+      pointer-events: auto;
+    }
+
+    .steps {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 14px;
+    }
+    .step-card {
+      background: var(--bg-elev);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px;
+    }
+    .step-card h3 {
+      margin: 0 0 8px;
+      font-size: 0.96rem;
+    }
+    .step-card pre {
+      margin: 8px 0;
+      background: var(--bg-code);
+      color: var(--code-text);
+      border: 1px solid var(--border);
+      padding: 10px 12px;
+      border-radius: 7px;
+      font-family: var(--mono);
+      font-size: 0.8rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .step-note {
+      font-size: 0.83rem;
+      color: var(--text-muted);
+      margin: 6px 0 0;
+    }
+
+    /* 3-col use cases */
+    .use-cases {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 14px;
+      margin-top: 18px;
+    }
+    .use-card {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px 16px;
+      background: var(--bg);
+    }
+    .use-card h3 {
+      margin: 0 0 6px;
+      font-size: 0.95rem;
+    }
+    .use-card p {
+      margin: 0;
+      font-size: 0.87rem;
+      color: var(--text-muted);
+    }
+
+    /* Security list */
+    .sec-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+    }
+    .sec-item {
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 15px 16px;
+      background: var(--bg-elev);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-width: 0;
+    }
+    .sec-item h3 { margin: 0; font-size: 0.96rem; }
+    .sec-item p { margin: 0; font-size: 0.88rem; color: var(--text-muted); }
+
+    .verify-inline {
+      margin-top: 4px;
+      background: var(--bg-code);
+      color: var(--code-text);
+      border: 1px solid var(--border);
+      padding: 8px 10px;
+      border-radius: 7px;
+      font-family: var(--mono);
+      font-size: 0.78rem;
+      white-space: normal;
+      word-break: break-word;
+    }
+
+    /* Stacked Disclaimers */
+    .notices {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .notice {
+      border-radius: 8px;
+      padding: 14px 16px;
+      font-size: 0.89rem;
+      border: 1px solid var(--border);
+      border-left: 4px solid var(--text-muted);
+      background: var(--bg-elev);
+    }
+    .notice-warn {
+      background: var(--warn-bg);
+      border-color: var(--warn-border);
+      border-left-color: var(--warn-border);
+    }
+    .notice-title {
+      display: block;
+      font-weight: 700;
+      margin-bottom: 4px;
+    }
+
+    /* Footer */
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 26px 0 38px;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    .footer-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      margin-bottom: 8px;
+    }
+    .footer-links a { color: var(--text); }
+
+    @media (max-width: 820px) {
+      .hero-top { grid-template-columns: 1fr; }
+      .hero-logo { display: none !important; }
+      .split-term, .steps, .use-cases, .sec-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container nav">
+      <a class="brand" href="#">
+        <svg class="brand-glyph" viewBox="0 0 32 26" aria-hidden="true">
+          <ellipse cx="7.2" cy="13" rx="5.0" ry="8.2" fill="var(--blue-glow)" stroke="var(--blue)" stroke-width="2.4"/>
+          <path d="M16 2.5v21M14.2 3.2h3.6M14.2 22.8h3.6" stroke="var(--text)" stroke-width="2.1" stroke-linecap="round"/>
+          <ellipse cx="24.8" cy="13" rx="5.0" ry="8.2" fill="var(--orange-glow)" stroke="var(--orange)" stroke-width="2.4"/>
+        </svg>
+        <span>dtfm</span>
+      </a>
+      <nav class="nav-links" aria-label="Primary">
+        <a href="#quickstart">Quickstart</a>
+        <a href="#security">Security</a>
+        <a href="/agent.md">Agent Guide</a>
+        <a href="https://github.com/iinozemtsev-lab/dtfm/blob/main/docs/host_relay.md">Self-Host Relay</a>
+        <a href="https://github.com/iinozemtsev-lab/dtfm">GitHub</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <!-- HERO -->
+    <section class="hero" style="border-top:none;">
+      <div class="hero-top">
+        <div>
+          <h1>Let sandboxed AI agents run privileged commands—with your <code>[y]</code> approval.</h1>
+          <p class="lead">
+            Keep <code>sudo</code>, SSH keys, and cloud tokens (<code>aws</code>, <code>gcloud</code>, <code>kubectl</code>) on your machine—never inside the agent's container or VM.
+            When the agent needs a privileged or host command, <strong><code>lmdtfy</code></strong> sends it to your terminal (<strong><code>dtfm</code></strong>), where you inspect it, press <code>[y]</code>, and authenticate locally.
+          </p>
+        </div>
+        <img class="hero-logo hero-logo-light" src="/assets/dtfm-logo-light.jpg" alt="dtfm dual-portal logo">
+        <img class="hero-logo hero-logo-dark" src="/assets/dtfm-logo-dark.jpg" alt="dtfm dual-portal logo">
+      </div>
+
+      <!-- Aligned Name Pills + Split Terminal Demo -->
+      <div class="split-term">
+        <div class="term-col">
+          <span class="pill pill-blue">
+            <code>lmdtfy</code> <span>= <strong>Let Me Do That For You</strong> (agent sandbox)</span>
+          </span>
+          <div class="term-card blue">
+            <div class="term-head">
+              <span>Agent Sandbox · lmdtfy</span>
+              <span>Outbound request</span>
+            </div>
+            <pre class="term-body" id="term-left"><span class="t-dim">$</span> lmdtfy exec \
+    --why <span class="t-blue">"Restart Nginx after updating TLS config"</span> \
+    -- sudo systemctl restart nginx</pre>
+          </div>
+        </div>
+
+        <div class="term-col">
+          <span class="pill pill-orange">
+            <code>dtfm</code> <span>= <strong>Do That For Me</strong> (your terminal)</span>
+          </span>
+          <div class="term-card orange">
+            <div class="term-head">
+              <span>Your Terminal · dtfm</span>
+              <div class="term-tabs">
+                <button class="term-tab active" type="button" data-demo="single">Single Command</button>
+                <button class="term-tab" type="button" data-demo="multi">Multiline Script</button>
+              </div>
+            </div>
+            <pre class="term-body" id="term-right"><span class="t-dim">──────────────────────────────────────────────────</span>
+<span class="t-orange">🔔 LMDTFY Command Execution Request:</span>
+   <span class="t-bold">Reason:</span>  Restart Nginx after updating TLS config
+   <span class="t-bold">Command:</span> sudo systemctl restart nginx
+<span class="t-dim">──────────────────────────────────────────────────</span>
+Approve execution? [y] Run  [e] Edit  [n] Reject: <span class="t-bold">y</span>
+⚡ Executing: sudo systemctl restart nginx
+[sudo] password for ivan: 
+<span class="t-green">✅ Command succeeded (exit code 0, 142ms)</span></pre>
+          </div>
+        </div>
+      </div>
+      <div class="term-caption">
+        <strong>Zero-credential handoff:</strong> <code>sudo</code> reads your password or Touch ID directly from <code>/dev/tty</code>—neither <code>dtfm</code> nor <code>lmdtfy</code> ever sees your credentials.
+      </div>
+    </section>
+
+    <!-- QUICKSTART -->
+    <section id="quickstart">
+      <h2>Quickstart</h2>
+      <p class="sec-sub">Install both binaries on your workstation, then pair <code>dtfm</code> with <code>lmdtfy</code> over an E2EE Magic Link or a local/SSH Unix socket.</p>
+
+      <div class="install-row">
+        <div class="cmd-box">
+          <span><span class="prompt">$ </span><span id="install-cmd">curl -fsSL https://dtfm.dev/install | sh</span></span>
+          <button class="copy-btn" type="button" data-copy="curl -fsSL https://dtfm.dev/install | sh">Copy</button>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <button class="tab-btn active" type="button" data-qs="relay">1. Magic Link (Containers &amp; Cloud Sandboxes)</button>
+        <button class="tab-btn" type="button" data-qs="socket">2. Local or SSH Socket (Same Machine / VPS)</button>
+      </div>
+
+      <div class="tab-panels">
+      <div class="tab-panel active" id="qs-relay">
+        <div class="diagram-wrap" aria-label="Magic Link E2EE Relay flow">
+          <svg viewBox="0 0 880 74" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">
+            <rect x="10" y="14" width="185" height="46" rx="8" fill="none" stroke="#00A8FF" stroke-width="2"/>
+            <text x="102" y="34" text-anchor="middle" fill="currentColor" font-weight="700">Agent Sandbox</text>
+            <text x="102" y="50" text-anchor="middle" fill="#8b949e">lmdtfy --relay</text>
+
+            <line x1="195" y1="37" x2="325" y2="37" stroke="#00A8FF" stroke-width="2" stroke-dasharray="5,4"/>
+            <text x="260" y="28" text-anchor="middle" fill="#8b949e" font-size="10">WSS + E2EE</text>
+
+            <rect x="325" y="14" width="230" height="46" rx="8" fill="none" stroke="#8b949e" stroke-width="1.5"/>
+            <text x="440" y="34" text-anchor="middle" fill="currentColor" font-weight="700">relay.dtfm.dev (RAM only)</text>
+            <text x="440" y="50" text-anchor="middle" fill="#8b949e" font-size="10">#&lt;key&gt; never sent to server</text>
+
+            <line x1="555" y1="37" x2="685" y2="37" stroke="#FF7A00" stroke-width="2" stroke-dasharray="5,4"/>
+            <text x="620" y="28" text-anchor="middle" fill="#8b949e" font-size="10">WSS + E2EE</text>
+
+            <rect x="685" y="14" width="185" height="46" rx="8" fill="none" stroke="#FF7A00" stroke-width="2"/>
+            <text x="777" y="34" text-anchor="middle" fill="currentColor" font-weight="700">Your Terminal</text>
+            <text x="777" y="50" text-anchor="middle" fill="#8b949e">dtfm --relay</text>
+          </svg>
+        </div>
+
+        <div class="steps">
+          <div class="step-card">
+            <h3>1. Start a relay session on your machine</h3>
+            <pre>$ dtfm --relay
+Agent Magic Link:
+  https://dtfm.dev/c/7a9b2c3d...#e8d7c6b5...</pre>
+            <p class="step-note">Zero inbound ports. The <code>#&lt;key&gt;</code> fragment stays client-side per RFC 3986.</p>
+          </div>
+          <div class="step-card">
+            <h3>2. Paste one line into your agent's chat</h3>
+            <pre>Read https://dtfm.dev/agent.md and use https://dtfm.dev/c/7a9b2c3d...#e8d7c6b5... to run privileged commands via lmdtfy.</pre>
+            <p class="step-note">The agent installs <code>lmdtfy</code> via <code>curl -fsSL https://dtfm.dev/install | sh -s -- lmdtfy</code> and runs <code>lmdtfy ping</code>.</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="qs-socket">
+        <div class="diagram-wrap" aria-label="Direct Unix Socket and ssh -R flow">
+          <svg viewBox="0 0 880 74" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">
+            <rect x="10" y="14" width="185" height="46" rx="8" fill="none" stroke="#00A8FF" stroke-width="2"/>
+            <text x="102" y="34" text-anchor="middle" fill="currentColor" font-weight="700">Local / SSH VM</text>
+            <text x="102" y="50" text-anchor="middle" fill="#8b949e">lmdtfy exec</text>
+
+            <line x1="195" y1="37" x2="685" y2="37" stroke="#8b949e" stroke-width="2"/>
+            <text x="440" y="28" text-anchor="middle" fill="#8b949e" font-size="11">Direct Unix Socket or ssh -R RemoteForward (zero relay)</text>
+
+            <rect x="685" y="14" width="185" height="46" rx="8" fill="none" stroke="#FF7A00" stroke-width="2"/>
+            <text x="777" y="34" text-anchor="middle" fill="currentColor" font-weight="700">Your Terminal</text>
+            <text x="777" y="50" text-anchor="middle" fill="#8b949e">dtfm</text>
+          </svg>
+        </div>
+
+        <div class="steps">
+          <div class="step-card">
+            <h3>1. Start the listener (or forward over SSH)</h3>
+            <pre>$ dtfm
+
+# Or drive a remote VM over SSH:
+$ dtfm ssh-config user@box --write &amp;&amp; ssh user@box</pre>
+            <p class="step-note">Listens on <code>/run/user/&lt;uid&gt;/lmdtfy.sock</code> (Linux) or <code>~/.lmdtfy.sock</code> (macOS).</p>
+          </div>
+          <div class="step-card">
+            <h3>2. Dispatch from the agent</h3>
+            <pre>$ lmdtfy ping
+$ lmdtfy exec --why "Check listening TCP ports" -- sudo ss -tulpn</pre>
+            <p class="step-note">See <a href="https://github.com/iinozemtsev-lab/dtfm/blob/main/docs/lmdtfy_guide.md">docs/lmdtfy_guide.md</a> for full CLI flags and exit codes.</p>
+          </div>
+        </div>
+      </div>
+      </div>
+
+      <div class="use-cases">
+        <div class="use-card">
+          <h3>Local <code>sudo</code> without <code>NOPASSWD</code></h3>
+          <p>Gate <code>apt</code>, <code>systemctl</code>, or <code>ufw</code> behind <code>[y]</code> and your password or Touch ID.</p>
+        </div>
+        <div class="use-card">
+          <h3>Cloud keys stay off sandboxes</h3>
+          <p>Keep <code>gcloud</code>, <code>aws</code>, <code>kubectl</code>, <code>gh</code>, and <code>1Password</code> on your laptop while agents work anywhere else.</p>
+        </div>
+        <div class="use-card">
+          <h3>Supervised remote ops</h3>
+          <p>Let agents administer a VPS over <code>ssh</code> while you approve or <code>[e]</code> edit every command before it runs.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- SECURITY -->
+    <section id="security">
+      <h2>Security &amp; Verification</h2>
+      <p class="sec-sub">Built to keep credentials on <code>/dev/tty</code>, payloads encrypted end-to-end, and terminal prompts spoof-resistant.</p>
+
+      <div class="sec-grid">
+        <div class="sec-item">
+          <h3>TTY &amp; Stdin Isolation (<code>TIOCSPGRP</code>)</h3>
+          <p>Child <code>stdin</code> is bound to <code>/dev/null</code>; authenticators (<code>sudo</code>, <code>ssh</code>, <code>gpg</code>, <code>pam_tid</code>) receive foreground <code>/dev/tty</code> control directly so passwords bypass <code>dtfm</code> and <code>lmdtfy</code>.</p>
+        </div>
+        <div class="sec-item">
+          <h3>Zero-Knowledge <code>#fragment</code> E2EE</h3>
+          <p>Bilateral nonces + <code>HKDF-SHA256</code> + <code>AES-256-GCM</code> (with session-ID AAD) derive keys from <code>#&lt;key&gt;</code>, which is never transmitted. <code>dtfm-relay</code> routes ciphertext in RAM with zero disk state.</p>
+        </div>
+        <div class="sec-item">
+          <h3>Anti-Spoofing Terminal Prompt</h3>
+          <p>Escapes ANSI/CSI sequences, highlights Trojan Source bidi/control characters, flushes pending TTY input (<code>TCFLSH</code>/<code>TIOCFLUSH</code>) before prompting, and renders multiline scripts with numbered gutters.</p>
+        </div>
+        <div class="sec-item">
+          <h3>Verifiable Builds</h3>
+          <p>Binaries are verified against <code>SHA256SUMS</code> by <a href="https://dtfm.dev/install">install.sh</a> and attested in GitHub Actions:</p>
+          <div class="verify-inline">$ gh attestation verify dtfm --repo iinozemtsev-lab/dtfm</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- DISCLAIMERS (stacked full-width) -->
+    <section>
+      <div class="notices">
+        <div class="notice notice-warn">
+          <span class="notice-title">Execution Trust Boundary</span>
+          <code>dtfm</code> is a human-in-the-loop seatbelt, not a sandbox. Approved commands run <strong>unsandboxed</strong> on your host with your local user's privileges—only pair with your own agent sessions, and always read the command and <code>--why</code> before pressing <code>y</code>.
+        </div>
+        <div class="notice">
+          <span class="notice-title">Public Relay (<code>relay.dtfm.dev</code>)</span>
+          Provided free and as-is on a best-effort basis with zero disk logging and no uptime SLA. For production or team reliance, <a href="https://github.com/iinozemtsev-lab/dtfm/blob/main/docs/host_relay.md">self-host <code>dtfm-relay</code></a> on your own VPS.
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <div class="container">
+      <div class="footer-links">
+        <a href="https://github.com/iinozemtsev-lab/dtfm/releases">Releases</a>
+        <a href="https://dtfm.dev/install">Install Script</a>
+        <a href="https://github.com/iinozemtsev-lab/dtfm/blob/main/LICENSE">Apache-2.0</a>
+      </div>
+      <div>© 2026 Ivan Inozemtsev · <code>dtfm.dev</code> sets no cookies, runs no analytics, and loads no third-party scripts or fonts.</div>
+    </div>
+  </footer>
+
+  <script>
+    document.querySelectorAll('.copy-btn').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var text = btn.getAttribute('data-copy');
+        if (navigator.clipboard) {
+          navigator.clipboard.writeText(text).then(function () {
+            var orig = btn.textContent;
+            btn.textContent = 'Copied';
+            setTimeout(function () { btn.textContent = orig; }, 1400);
+          });
+        }
+      });
+    });
+
+    var leftEl = document.getElementById('term-left');
+    var rightEl = document.getElementById('term-right');
+    var singleLeft = leftEl.innerHTML;
+    var singleRight = rightEl.innerHTML;
+    var multiLeft = '<span class="t-dim">$</span> lmdtfy exec \\\n    --why <span class="t-blue">"Check Nginx config and reload"</span> \\\n    -- bash -c <span class="t-blue">\'nginx -t &amp;&amp;\n      sudo systemctl reload nginx\'</span>';
+    var multiRight = '<span class="t-dim">──────────────────────────────────────────────────</span>\n<span class="t-orange">🔔 LMDTFY Script Execution Request:</span>\n   <span class="t-bold">Reason:</span>  Check Nginx config and reload\n   <span class="t-dim">1 │</span> nginx -t &amp;&amp;\n   <span class="t-dim">2 │</span> sudo systemctl reload nginx\n<span class="t-dim">──────────────────────────────────────────────────</span>\nApprove execution? [y] Run  [n] Reject: <span class="t-bold">y</span>\n<span class="t-green">✅ Command succeeded (exit code 0, 98ms)</span>';
+
+    document.querySelectorAll('[data-demo]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        document.querySelectorAll('[data-demo]').forEach(function (b) { b.classList.remove('active'); });
+        btn.classList.add('active');
+        if (btn.getAttribute('data-demo') === 'multi') {
+          leftEl.innerHTML = multiLeft;
+          rightEl.innerHTML = multiRight;
+        } else {
+          leftEl.innerHTML = singleLeft;
+          rightEl.innerHTML = singleRight;
+        }
+      });
+    });
+
+    document.querySelectorAll('[data-qs]').forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var target = btn.getAttribute('data-qs');
+        document.querySelectorAll('[data-qs]').forEach(function (b) { b.classList.remove('active'); });
+        document.querySelectorAll('.tab-panel').forEach(function (p) { p.classList.remove('active'); });
+        btn.classList.add('active');
+        document.getElementById('qs-' + target).classList.add('active');
+      });
+    });
+  </script>
+</body>
+</html>
