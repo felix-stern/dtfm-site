@@ -6,10 +6,12 @@ from __future__ import annotations
 import re
 import struct
 import sys
+import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+ROOT_RESOLVED = ROOT.resolve()
 
 REQUIRED_FILES = [
     "index.html",
@@ -34,8 +36,7 @@ class SiteHTMLParser(HTMLParser):
         super().__init__(convert_charrefs=True)
         self.metas: list[dict[str, str]] = []
         self.links: list[dict[str, str]] = []
-        self.srcs: list[tuple[str, str]] = []
-        self.hrefs: list[tuple[str, str]] = []
+        self.attrs_all: list[tuple[str, dict[str, str]]] = []
         self.scripts: list[str] = []
         self.styles: list[str] = []
         self._in_script = False
@@ -46,14 +47,11 @@ class SiteHTMLParser(HTMLParser):
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_map = {k.lower(): (v or "") for k, v in attrs}
         t = tag.lower()
+        self.attrs_all.append((t, attr_map))
         if t == "meta":
             self.metas.append(attr_map)
         elif t == "link":
             self.links.append(attr_map)
-        if "src" in attr_map:
-            self.srcs.append((t, attr_map["src"]))
-        if "href" in attr_map:
-            self.hrefs.append((t, attr_map["href"]))
         if t == "script":
             self._in_script = True
             self._script_buf = []
@@ -93,21 +91,63 @@ def check_favicon_ico() -> None:
     _, _, count = struct.unpack("<HHH", ico[:6])
     if count < 2:
         raise AssertionError(f"favicon.ico expected >= 2 icon entries, got {count}")
+    if len(ico) < 6 + 16 * count:
+        raise AssertionError("favicon.ico truncated directory entries")
+    for i in range(count):
+        entry = ico[6 + 16 * i : 6 + 16 * (i + 1)]
+        size, offset = struct.unpack("<II", entry[8:16])
+        if size == 0 or offset < 6 + 16 * count or offset + size > len(ico):
+            raise AssertionError(f"favicon.ico entry {i} has out-of-bounds offset/size")
 
 
-def _resolve_local_asset(rel: str, attr_name: str, url: str) -> None:
-    if url.startswith(("http://", "https://", "//")):
-        raise AssertionError(f"{rel}: external {attr_name} not allowed: {url}")
-    if url.startswith(("data:", "mailto:", "#")):
+def check_favicon_svg() -> None:
+    svg_text = (ROOT / "favicon.svg").read_text(encoding="utf-8")
+    root = ET.fromstring(svg_text)
+    if not root.tag.endswith("svg"):
+        raise AssertionError("favicon.svg root element must be <svg>")
+    for elem in root.iter():
+        tag = elem.tag.rsplit("}", 1)[-1].lower()
+        if tag == "script":
+            raise AssertionError("favicon.svg must not contain <script>")
+        for attr, val in elem.attrib.items():
+            attr_local = attr.rsplit("}", 1)[-1].lower()
+            if attr_local in ("href", "src") or attr_local.startswith("on"):
+                raise AssertionError(f"favicon.svg disallowed attribute '{attr_local}' on <{tag}>: {val}")
+        if elem.text and re.search(r"(?:url\s*\(|@import)", elem.text, re.IGNORECASE):
+            if re.search(r"(?:https?:)?//", elem.text, re.IGNORECASE):
+                raise AssertionError("favicon.svg must not reference external URLs in <style>")
+
+
+def _resolve_local_asset(
+    rel: str,
+    attr_name: str,
+    raw_url: str,
+    *,
+    allow_external: bool = False,
+    allow_data_image: bool = False,
+) -> None:
+    url = raw_url.strip()
+    lower = url.lower()
+    if lower.startswith(("http://", "https://", "//")):
+        if allow_external:
+            return
+        raise AssertionError(f"{rel}: external {attr_name} not allowed: {raw_url}")
+    if lower.startswith("data:"):
+        if allow_data_image and lower.startswith("data:image/"):
+            return
+        raise AssertionError(f"{rel}: disallowed data: URI in {attr_name}: {raw_url}")
+    if lower.startswith(("javascript:", "vbscript:")):
+        raise AssertionError(f"{rel}: unsafe script URI in {attr_name}: {raw_url}")
+    if lower.startswith(("mailto:", "#")):
         return
     if not url.startswith("/"):
-        raise AssertionError(f"{rel}: local {attr_name} must start with '/': {url}")
+        raise AssertionError(f"{rel}: local {attr_name} must start with '/': {raw_url}")
     clean = url.split("#", 1)[0].split("?", 1)[0]
     if clean in NGINX_ROUTED_PATHS or clean.startswith("/c/"):
         return
-    target = ROOT / clean.lstrip("/")
-    if not target.is_file():
-        raise AssertionError(f"{rel}: broken local asset reference {url}")
+    target = (ROOT / clean.lstrip("/")).resolve()
+    if not target.is_relative_to(ROOT_RESOLVED) or not target.is_file():
+        raise AssertionError(f"{rel}: broken or escaping local asset reference {raw_url}")
 
 
 def check_html_file(rel: str) -> SiteHTMLParser:
@@ -116,22 +156,47 @@ def check_html_file(rel: str) -> SiteHTMLParser:
     parser.feed(content)
     parser.close()
 
-    # Every <script>, <img>, <iframe>, <video>, <audio>, <source> src= must be local and exist
-    for tag, src in parser.srcs:
-        _resolve_local_asset(rel, f"<{tag} src>", src)
+    for tag, attrs in parser.attrs_all:
+        # Reject inline event handlers and inline style="..." attributes
+        for attr_name in attrs:
+            if attr_name.startswith("on"):
+                raise AssertionError(f"{rel}: inline event handler '{attr_name}' not allowed on <{tag}>")
+            if attr_name == "style":
+                raise AssertionError(f"{rel}: inline style attribute not allowed on <{tag}>")
 
-    # Every <link> href= must be local and exist (no external stylesheets/fonts/icons)
-    for link in parser.links:
-        href = link.get("href", "")
-        if href:
-            _resolve_local_asset(rel, "<link href>", href)
+        if tag == "base" and "href" in attrs:
+            raise AssertionError(f"{rel}: <base href> not allowed")
+        if tag == "meta" and attrs.get("http-equiv", "").strip().lower() == "refresh":
+            raise AssertionError(f"{rel}: <meta http-equiv='refresh'> not allowed")
 
-    # Every <a href="/..."> local path must resolve to an existing file or known Nginx route
-    for tag, href in parser.hrefs:
-        if tag == "a" and href.startswith("/") and not href.startswith("//"):
-            _resolve_local_asset(rel, "<a href>", href)
+        if "src" in attrs:
+            _resolve_local_asset(
+                rel,
+                f"<{tag} src>",
+                attrs["src"],
+                allow_data_image=(tag == "img"),
+            )
+        if "poster" in attrs:
+            _resolve_local_asset(rel, f"<{tag} poster>", attrs["poster"])
+        if tag == "object" and "data" in attrs:
+            _resolve_local_asset(rel, "<object data>", attrs["data"])
+        if "srcset" in attrs:
+            for item in attrs["srcset"].split(","):
+                candidate = item.strip().split()[0] if item.strip() else ""
+                if candidate:
+                    _resolve_local_asset(rel, f"<{tag} srcset>", candidate, allow_data_image=(tag in {"img", "source"}))
+        for act_attr in ("action", "formaction"):
+            if act_attr in attrs:
+                _resolve_local_asset(rel, f"<{tag} {act_attr}>", attrs[act_attr])
+        for href_attr in ("href", "xlink:href"):
+            if href_attr in attrs:
+                _resolve_local_asset(
+                    rel,
+                    f"<{tag} {href_attr}>",
+                    attrs[href_attr],
+                    allow_external=(tag == "a"),
+                )
 
-    # Reject external url(...) or @import inside <style> blocks
     style_text = "\n".join(parser.styles)
     if re.search(r"url\s*\(\s*['\"]?\s*(?:https?:)?//", style_text, re.IGNORECASE):
         raise AssertionError(f"{rel}: external url(...) not allowed in <style>")
@@ -150,19 +215,32 @@ def check_c_html(parser: SiteHTMLParser) -> None:
         raise AssertionError('c.html must include <meta name="referrer" content="no-referrer">')
 
     has_noindex = any(
-        m.get("name", "").lower() == "robots" and "noindex" in m.get("content", "").lower() and "nofollow" in m.get("content", "").lower()
+        m.get("name", "").lower() == "robots"
+        and "noindex" in m.get("content", "").lower()
+        and "nofollow" in m.get("content", "").lower()
         for m in parser.metas
     )
     if not has_noindex:
         raise AssertionError('c.html must include <meta name="robots" content="noindex, nofollow">')
+
+    has_csp = any(
+        m.get("http-equiv", "").lower() == "content-security-policy" and "default-src 'none'" in m.get("content", "").lower()
+        for m in parser.metas
+    )
+    if not has_csp:
+        raise AssertionError("c.html must include a default-src 'none' Content-Security-Policy meta tag")
 
     script_text = "\n".join(parser.scripts)
     forbidden_patterns = [
         (r"\binnerHTML\b", "innerHTML sink"),
         (r"\bouterHTML\b", "outerHTML sink"),
         (r"\binsertAdjacentHTML\b", "insertAdjacentHTML sink"),
-        (r"\bdocument\.write\b", "document.write sink"),
+        (r"\bdocument\.writeln?\b", "document.write/writeln sink"),
         (r"\beval\s*\(", "eval() sink"),
+        (r"\bFunction\s*\(", "Function() sink"),
+        (r"\bimport\s*\(", "dynamic import()"),
+        (r"\bnew\s+Image\s*\(", "new Image() network API"),
+        (r"\bWorker\s*\(", "Worker()"),
         (r"\bfetch\s*\(", "fetch() network API"),
         (r"\bXMLHttpRequest\b", "XMLHttpRequest network API"),
         (r"\bWebSocket\b", "WebSocket network API"),
@@ -177,6 +255,7 @@ def check_c_html(parser: SiteHTMLParser) -> None:
 def main() -> int:
     check_required_files()
     check_favicon_ico()
+    check_favicon_svg()
     check_html_file("index.html")
     c_parser = check_html_file("c.html")
     check_c_html(c_parser)

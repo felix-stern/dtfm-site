@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>dtfm — Agent Magic Link</title>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'">
   <meta name="referrer" content="no-referrer">
   <meta name="robots" content="noindex, nofollow">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
@@ -179,9 +180,7 @@
       background: var(--warn-bg);
       font-size: 0.91rem;
       margin-bottom: 16px;
-      display: none;
     }
-    .notice-warn.visible { display: block; }
     .notice-warn strong { display: block; margin-bottom: 2px; }
 
     .prompt-box {
@@ -305,18 +304,15 @@
 
       <section class="card card-human" aria-labelledby="human-heading">
         <h2 id="human-heading">For Humans: Paste into your AI Agent chat</h2>
-        <p>Copy the prompt below and send it to your AI agent (Claude Code, Cursor, Codex, etc.). This page makes zero network requests.</p>
+        <p>Copy the prompt below and send it to your AI agent (Claude Code, Cursor, Codex, etc.). This page makes zero background or third-party network requests.</p>
 
-        <div id="missing-key-warn" class="notice-warn" role="alert">
-          <strong>Missing <code>#&lt;key&gt;</code> secret fragment</strong>
-          This URL does not contain a <code>#&lt;key&gt;</code> fragment (it may have been stripped by a chat app or opened without the full link). Copy the complete <code>Agent Magic Link</code> printed by <code>dtfm --relay</code> in your terminal.
-        </div>
+        <div id="missing-key-warn" class="notice-warn" role="alert" hidden></div>
 
         <label for="agent-prompt" class="sr-only">Prompt for AI Agent</label>
         <textarea id="agent-prompt" class="prompt-box" readonly rows="3">Read https://dtfm.dev/agent.md and use the complete Agent Magic Link (including #&lt;key&gt;) to run commands via lmdtfy.</textarea>
 
         <div class="actions">
-          <button id="copy-prompt-btn" class="btn-primary" type="button">Copy Prompt for AI Agent</button>
+          <button id="copy-prompt-btn" class="btn-primary" type="button" disabled>Copy Prompt for AI Agent</button>
           <span id="copy-status" class="copy-status" aria-live="polite"></span>
         </div>
       </section>
@@ -330,13 +326,13 @@
         <ol class="agent-steps">
           <li>Read <a href="/agent.md"><code>https://dtfm.dev/agent.md</code></a> for the full <code>lmdtfy</code> operational manual.</li>
           <li>
-            Install <code>lmdtfy</code> if not already available:
-            <pre>curl -fsSL https://dtfm.dev/install | sh -s -- lmdtfy</pre>
+            Install <code>lmdtfy</code> if not already available and ensure <code>~/.local/bin</code> is in <code>PATH</code>:
+            <pre>curl -fsSL https://dtfm.dev/install | sh -s -- lmdtfy
+export PATH="$HOME/.local/bin:$PATH"</pre>
           </li>
           <li>
             Verify connectivity using the full Magic Link from chat (keep the <code>#&lt;key&gt;</code> fragment intact):
-            <pre>export LMDTFY_RELAY="&lt;full-url-with-hash&gt;"
-lmdtfy ping</pre>
+            <pre>lmdtfy --relay "&lt;full-url-with-hash&gt;" ping</pre>
           </li>
         </ol>
       </section>
@@ -350,7 +346,7 @@ lmdtfy ping</pre>
         <a href="https://dtfm.dev/install">Install Script</a>
         <a href="https://github.com/iinozemtsev-lab/dtfm/blob/main/LICENSE">Apache-2.0</a>
       </div>
-      <div>© 2026 Ivan Inozemtsev · <code>dtfm.dev</code> sets no cookies, runs no analytics, and makes zero network requests on this page.</div>
+      <div>© 2026 Ivan Inozemtsev · <code>dtfm.dev</code> sets no cookies, runs no analytics, and makes zero background or third-party network requests on this page.</div>
     </div>
   </footer>
 
@@ -361,31 +357,85 @@ lmdtfy ping</pre>
       var statusEl = document.getElementById('copy-status');
       var warnEl = document.getElementById('missing-key-warn');
       var defaultPrompt = 'Read https://dtfm.dev/agent.md and use the complete Agent Magic Link (including #<key>) to run commands via lmdtfy.';
-      var hasFragment = false;
+      var pathRe = /^(?:\/[A-Za-z0-9._-]+)*\/c\/([A-Za-z0-9_-]{1,64})\/?$/;
+      var hashRe = /^#([0-9a-fA-F]{64})$/;
+      var isValidLink = false;
+
+      function showWarning(titleText, bodyText) {
+        while (warnEl.firstChild) {
+          warnEl.removeChild(warnEl.firstChild);
+        }
+        var strong = document.createElement('strong');
+        strong.textContent = titleText;
+        var span = document.createElement('span');
+        span.textContent = bodyText;
+        warnEl.appendChild(strong);
+        warnEl.appendChild(span);
+        warnEl.hidden = false;
+      }
+
+      function clearWarning() {
+        while (warnEl.firstChild) {
+          warnEl.removeChild(warnEl.firstChild);
+        }
+        warnEl.hidden = true;
+      }
 
       function syncFromHash() {
-        hasFragment = typeof window.location.hash === 'string' && window.location.hash.length > 1;
-        if (hasFragment) {
-          var promptText = 'Read https://dtfm.dev/agent.md and use ' + window.location.href + ' to run commands via lmdtfy.';
-          promptBox.value = promptText;
-          promptBox.textContent = promptText;
-          warnEl.classList.remove('visible');
-          copyBtn.disabled = false;
-          statusEl.textContent = '';
-        } else {
+        var pathMatch = pathRe.exec(window.location.pathname || '');
+        var rawHash = (window.location.hash || '').trim();
+        var hashMatch = hashRe.exec(rawHash);
+
+        if (!pathMatch) {
+          isValidLink = false;
           promptBox.value = defaultPrompt;
-          promptBox.textContent = defaultPrompt;
-          warnEl.classList.add('visible');
           copyBtn.disabled = true;
-          statusEl.textContent = 'Add the #<key> fragment to enable copying.';
+          showWarning(
+            'Invalid session URL path',
+            'Expected /c/<session-id>#<64-hex-key>. Copy the complete Agent Magic Link printed by dtfm --relay.'
+          );
+          statusEl.textContent = 'Use a valid /c/<session-id>#<key> Magic Link to enable copying.';
+          return;
         }
+
+        if (!rawHash || rawHash === '#') {
+          isValidLink = false;
+          promptBox.value = defaultPrompt;
+          copyBtn.disabled = true;
+          showWarning(
+            'Missing #<key> secret fragment',
+            'This URL does not contain a #<key> fragment (it may have been stripped by a chat app or opened without the full link). Copy the complete Agent Magic Link printed by dtfm --relay.'
+          );
+          statusEl.textContent = 'Add the #<key> fragment to enable copying.';
+          return;
+        }
+
+        if (!hashMatch) {
+          isValidLink = false;
+          promptBox.value = defaultPrompt;
+          copyBtn.disabled = true;
+          showWarning(
+            'Malformed or truncated #<key> fragment',
+            'The #<key> secret must be exactly 64 hexadecimal characters. Copy the complete Agent Magic Link printed by dtfm --relay.'
+          );
+          statusEl.textContent = 'Fix the #<key> fragment to enable copying.';
+          return;
+        }
+
+        isValidLink = true;
+        clearWarning();
+        var canonicalPath = window.location.pathname.replace(/\/+$/, '');
+        var canonicalUrl = window.location.origin + canonicalPath + '#' + hashMatch[1];
+        promptBox.value = 'Read https://dtfm.dev/agent.md and use ' + canonicalUrl + ' to run commands via lmdtfy.';
+        copyBtn.disabled = false;
+        statusEl.textContent = '';
       }
 
       syncFromHash();
       window.addEventListener('hashchange', syncFromHash);
 
       copyBtn.addEventListener('click', function () {
-        if (!hasFragment) return;
+        if (!isValidLink) return;
         var text = promptBox.value;
         if (navigator.clipboard && navigator.clipboard.writeText) {
           navigator.clipboard.writeText(text).then(function () {
