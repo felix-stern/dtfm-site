@@ -37,8 +37,11 @@ class SiteHTMLParser(HTMLParser):
         self.srcs: list[tuple[str, str]] = []
         self.hrefs: list[tuple[str, str]] = []
         self.scripts: list[str] = []
+        self.styles: list[str] = []
         self._in_script = False
         self._script_buf: list[str] = []
+        self._in_style = False
+        self._style_buf: list[str] = []
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_map = {k.lower(): (v or "") for k, v in attrs}
@@ -54,15 +57,24 @@ class SiteHTMLParser(HTMLParser):
         if t == "script":
             self._in_script = True
             self._script_buf = []
+        elif t == "style":
+            self._in_style = True
+            self._style_buf = []
 
     def handle_endtag(self, tag: str) -> None:
-        if tag.lower() == "script" and self._in_script:
+        t = tag.lower()
+        if t == "script" and self._in_script:
             self._in_script = False
             self.scripts.append("".join(self._script_buf))
+        elif t == "style" and self._in_style:
+            self._in_style = False
+            self.styles.append("".join(self._style_buf))
 
     def handle_data(self, data: str) -> None:
         if self._in_script:
             self._script_buf.append(data)
+        elif self._in_style:
+            self._style_buf.append(data)
 
 
 def check_required_files() -> None:
@@ -83,36 +95,48 @@ def check_favicon_ico() -> None:
         raise AssertionError(f"favicon.ico expected >= 2 icon entries, got {count}")
 
 
+def _resolve_local_asset(rel: str, attr_name: str, url: str) -> None:
+    if url.startswith(("http://", "https://", "//")):
+        raise AssertionError(f"{rel}: external {attr_name} not allowed: {url}")
+    if url.startswith(("data:", "mailto:", "#")):
+        return
+    if not url.startswith("/"):
+        raise AssertionError(f"{rel}: local {attr_name} must start with '/': {url}")
+    clean = url.split("#", 1)[0].split("?", 1)[0]
+    if clean in NGINX_ROUTED_PATHS or clean.startswith("/c/"):
+        return
+    target = ROOT / clean.lstrip("/")
+    if not target.is_file():
+        raise AssertionError(f"{rel}: broken local asset reference {url}")
+
+
 def check_html_file(rel: str) -> SiteHTMLParser:
     content = (ROOT / rel).read_text(encoding="utf-8")
     parser = SiteHTMLParser()
     parser.feed(content)
     parser.close()
 
-    # No external src= (scripts, images, iframes, media)
+    # Every <script>, <img>, <iframe>, <video>, <audio>, <source> src= must be local and exist
     for tag, src in parser.srcs:
-        if src.startswith(("http://", "https://", "//")):
-            raise AssertionError(f"{rel}: external src not allowed on <{tag}>: {src}")
+        _resolve_local_asset(rel, f"<{tag} src>", src)
 
-    # No external stylesheets or font links
+    # Every <link> href= must be local and exist (no external stylesheets/fonts/icons)
     for link in parser.links:
-        rel_val = link.get("rel", "").lower()
         href = link.get("href", "")
-        if "stylesheet" in rel_val and href.startswith(("http://", "https://", "//")):
-            raise AssertionError(f"{rel}: external stylesheet not allowed: {href}")
-        if "fonts.googleapis.com" in href or "fonts.gstatic.com" in href:
-            raise AssertionError(f"{rel}: external font link not allowed: {href}")
+        if href:
+            _resolve_local_asset(rel, "<link href>", href)
 
-    # Every local /... asset reference must resolve to a repo file or known Nginx route
-    for _, url in parser.srcs + parser.hrefs:
-        if not url.startswith("/") or url.startswith("//"):
-            continue
-        clean = url.split("#", 1)[0].split("?", 1)[0]
-        if clean in NGINX_ROUTED_PATHS or clean.startswith("/c/"):
-            continue
-        target = ROOT / clean.lstrip("/")
-        if not target.is_file():
-            raise AssertionError(f"{rel}: broken local asset reference {url}")
+    # Every <a href="/..."> local path must resolve to an existing file or known Nginx route
+    for tag, href in parser.hrefs:
+        if tag == "a" and href.startswith("/") and not href.startswith("//"):
+            _resolve_local_asset(rel, "<a href>", href)
+
+    # Reject external url(...) or @import inside <style> blocks
+    style_text = "\n".join(parser.styles)
+    if re.search(r"url\s*\(\s*['\"]?\s*(?:https?:)?//", style_text, re.IGNORECASE):
+        raise AssertionError(f"{rel}: external url(...) not allowed in <style>")
+    if re.search(r"@import\s+(?:url\s*\(\s*)?['\"]?\s*(?:https?:)?//", style_text, re.IGNORECASE):
+        raise AssertionError(f"{rel}: external @import not allowed in <style>")
 
     return parser
 
@@ -125,11 +149,20 @@ def check_c_html(parser: SiteHTMLParser) -> None:
     if not has_no_referrer:
         raise AssertionError('c.html must include <meta name="referrer" content="no-referrer">')
 
+    has_noindex = any(
+        m.get("name", "").lower() == "robots" and "noindex" in m.get("content", "").lower() and "nofollow" in m.get("content", "").lower()
+        for m in parser.metas
+    )
+    if not has_noindex:
+        raise AssertionError('c.html must include <meta name="robots" content="noindex, nofollow">')
+
     script_text = "\n".join(parser.scripts)
     forbidden_patterns = [
         (r"\binnerHTML\b", "innerHTML sink"),
         (r"\bouterHTML\b", "outerHTML sink"),
+        (r"\binsertAdjacentHTML\b", "insertAdjacentHTML sink"),
         (r"\bdocument\.write\b", "document.write sink"),
+        (r"\beval\s*\(", "eval() sink"),
         (r"\bfetch\s*\(", "fetch() network API"),
         (r"\bXMLHttpRequest\b", "XMLHttpRequest network API"),
         (r"\bWebSocket\b", "WebSocket network API"),

@@ -246,8 +246,18 @@
       font-size: 0.93rem;
       color: var(--text-muted);
     }
-    .agent-steps li { margin-bottom: 6px; }
+    .agent-steps li { margin-bottom: 10px; }
+    .agent-steps li:last-child { margin-bottom: 0; }
     .agent-steps strong { color: var(--text); }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
 
     footer {
       border-top: 1px solid var(--border);
@@ -269,10 +279,10 @@
   <header>
     <div class="container nav">
       <a class="brand" href="/">
-        <svg class="brand-glyph" viewBox="0 0 36 28" aria-hidden="true">
-          <ellipse cx="8" cy="14" rx="5.5" ry="9" fill="none" stroke="var(--blue)" stroke-width="2.4"/>
-          <path d="M18 3.5v21M16 4.2h4M16 23.8h4" stroke="var(--text)" stroke-width="2" stroke-linecap="round"/>
-          <ellipse cx="28" cy="14" rx="5.5" ry="9" fill="none" stroke="var(--orange)" stroke-width="2.4"/>
+        <svg class="brand-glyph" viewBox="0 0 32 26" aria-hidden="true">
+          <ellipse cx="7.2" cy="13" rx="5.0" ry="8.2" fill="var(--blue-glow)" stroke="var(--blue)" stroke-width="2.4"/>
+          <path d="M16 2.5v21M14.2 3.2h3.6M14.2 22.8h3.6" stroke="var(--text)" stroke-width="2.1" stroke-linecap="round"/>
+          <ellipse cx="24.8" cy="13" rx="5.0" ry="8.2" fill="var(--orange-glow)" stroke="var(--orange)" stroke-width="2.4"/>
         </svg>
         <span>dtfm</span>
       </a>
@@ -302,7 +312,7 @@
           This URL does not contain a <code>#&lt;key&gt;</code> fragment (it may have been stripped by a chat app or opened without the full link). Copy the complete <code>Agent Magic Link</code> printed by <code>dtfm --relay</code> in your terminal.
         </div>
 
-        <label for="agent-prompt" class="sr-only" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0,0,0,0);">Prompt for AI Agent</label>
+        <label for="agent-prompt" class="sr-only">Prompt for AI Agent</label>
         <textarea id="agent-prompt" class="prompt-box" readonly rows="3">Read https://dtfm.dev/agent.md and use the complete Agent Magic Link (including #&lt;key&gt;) to run commands via lmdtfy.</textarea>
 
         <div class="actions">
@@ -319,13 +329,16 @@
         </p>
         <ol class="agent-steps">
           <li>Read <a href="/agent.md"><code>https://dtfm.dev/agent.md</code></a> for the full <code>lmdtfy</code> operational manual.</li>
-          <li>Install <code>lmdtfy</code> if not already available:</li>
+          <li>
+            Install <code>lmdtfy</code> if not already available:
+            <pre>curl -fsSL https://dtfm.dev/install | sh -s -- lmdtfy</pre>
+          </li>
+          <li>
+            Verify connectivity using the full Magic Link from chat (keep the <code>#&lt;key&gt;</code> fragment intact):
+            <pre>export LMDTFY_RELAY="&lt;full-url-with-hash&gt;"
+lmdtfy ping</pre>
+          </li>
         </ol>
-        <pre>curl -fsSL https://dtfm.dev/install | sh -s -- lmdtfy</pre>
-        <ol class="agent-steps" start="3">
-          <li>Verify connectivity using the full Magic Link from chat (keep the <code>#&lt;key&gt;</code> fragment intact):</li>
-        </ol>
-        <pre>lmdtfy --relay "&lt;full-url-with-hash&gt;" ping</pre>
       </section>
     </div>
   </main>
@@ -347,17 +360,29 @@
       var copyBtn = document.getElementById('copy-prompt-btn');
       var statusEl = document.getElementById('copy-status');
       var warnEl = document.getElementById('missing-key-warn');
+      var defaultPrompt = 'Read https://dtfm.dev/agent.md and use the complete Agent Magic Link (including #<key>) to run commands via lmdtfy.';
+      var hasFragment = false;
 
-      var hasFragment = typeof window.location.hash === 'string' && window.location.hash.length > 1;
-      if (hasFragment) {
-        var promptText = 'Read https://dtfm.dev/agent.md and use ' + window.location.href + ' to run commands via lmdtfy.';
-        promptBox.value = promptText;
-        promptBox.textContent = promptText;
-      } else {
-        warnEl.classList.add('visible');
-        copyBtn.disabled = true;
-        statusEl.textContent = 'Add the #<key> fragment to enable copying.';
+      function syncFromHash() {
+        hasFragment = typeof window.location.hash === 'string' && window.location.hash.length > 1;
+        if (hasFragment) {
+          var promptText = 'Read https://dtfm.dev/agent.md and use ' + window.location.href + ' to run commands via lmdtfy.';
+          promptBox.value = promptText;
+          promptBox.textContent = promptText;
+          warnEl.classList.remove('visible');
+          copyBtn.disabled = false;
+          statusEl.textContent = '';
+        } else {
+          promptBox.value = defaultPrompt;
+          promptBox.textContent = defaultPrompt;
+          warnEl.classList.add('visible');
+          copyBtn.disabled = true;
+          statusEl.textContent = 'Add the #<key> fragment to enable copying.';
+        }
       }
+
+      syncFromHash();
+      window.addEventListener('hashchange', syncFromHash);
 
       copyBtn.addEventListener('click', function () {
         if (!hasFragment) return;
