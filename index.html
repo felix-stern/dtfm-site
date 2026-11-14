@@ -632,7 +632,7 @@ Approve execution? [y] Run  [e] Edit  [n] Reject: <span class="t-bold">y</span>
           <svg viewBox="0 0 880 74" xmlns="http://www.w3.org/2000/svg" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="12">
             <rect x="10" y="14" width="185" height="46" rx="8" fill="none" stroke="#00A8FF" stroke-width="2"/>
             <text x="102" y="34" text-anchor="middle" fill="currentColor" font-weight="700">Agent Sandbox</text>
-            <text x="102" y="50" text-anchor="middle" fill="#8b949e">lmdtfy --relay</text>
+            <text x="102" y="50" text-anchor="middle" fill="#8b949e">lmdtfy exec --relay</text>
 
             <line x1="195" y1="37" x2="325" y2="37" stroke="#00A8FF" stroke-width="2" stroke-dasharray="5,4"/>
             <text x="260" y="28" text-anchor="middle" fill="#8b949e" font-size="10">WSS + E2EE</text>
@@ -695,7 +695,7 @@ $ dtfm ssh-config user@box --write &amp;&amp; ssh user@box</pre>
             <h3>2. Dispatch from the agent</h3>
             <pre>$ lmdtfy ping
 $ lmdtfy exec --why "Check listening TCP ports" -- sudo ss -tulpn</pre>
-            <p class="step-note">See <a href="https://github.com/iinozemtsev-lab/dtfm/blob/main/docs/lmdtfy_guide.md">docs/lmdtfy_guide.md</a> for full CLI flags and exit codes.</p>
+            <p class="step-note">See <a href="https://github.com/iinozemtsev-lab/dtfm/blob/main/docs/agent.md">docs/agent.md</a> for full CLI flags and exit codes.</p>
           </div>
         </div>
       </div>
